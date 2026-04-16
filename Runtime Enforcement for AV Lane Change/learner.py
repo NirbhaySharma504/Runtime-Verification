@@ -194,7 +194,7 @@ class CarlaProtocolSUL(SUL):
     Acceptance logic:
       s0 (ind=F, locked=None,    sink=F) → True   ACCEPT
       s2 (ind=T, locked=None,    sink=F) → False  REJECT
-      s3 (ind=T, locked='safe',  sink=F) → True   ACCEPT
+      s3 (ind=T, locked='safe',  sink=F) → False  REJECT
       s4 (ind=T, locked='unsafe',sink=F) → False  REJECT
       s1 (sink=True)                     → False  REJECT
     """
@@ -282,12 +282,9 @@ class CarlaProtocolSUL(SUL):
         if self._sink_flag:
             return False
 
-        # Only 's0' (idle) and 's3' (safe) are accepting states
-        if self._indicator_on and self._locked_config is None:
-            return False  # REJECT s2 (only i)
-        
-        if self._indicator_on and self._locked_config == 'unsafe':
-            return False  # REJECT s4 (i -> unsafe)
+        # Only 's0' (idle/completed) is the accepting state
+        if self._indicator_on:
+            return False  # REJECT s2, s3, s4 (must complete with 'e')
 
         return True
 
@@ -747,7 +744,7 @@ def _visualize(learned_dfa, base_path: str) -> None:
         ax.set_title(
             "Learned DFA — 5-state Lane-Change Protocol\n"
             "CARLA-physics SUL: crash via collision sensor, gap via get_location()/get_velocity()\n"
-            "s0=initial  s2=indicator  s3=safe+ind  s4=unsafe+ind  s1=sink",
+            "s0=initial/done  s2=indicator  s3=safe+ind  s4=unsafe+ind  s1=sink",
             fontsize=9)
         pos = nx.spring_layout(G, seed=42, k=3.5)
         nx.draw_networkx_nodes(G, pos, nodelist=accept_states,
@@ -763,9 +760,9 @@ def _visualize(learned_dfa, base_path: str) -> None:
         nx.draw_networkx_edge_labels(G, pos, edge_labels=el, font_size=8, ax=ax)
         ax.legend(handles=[
             mpatches.Patch(color='#c8f0c8',
-                label='ACCEPT: s0 s2 s3 s4 — no crash, no violation'),
+                label='ACCEPT: s0 (initial or completed lane change)'),
             mpatches.Patch(color='#f0c8c8',
-                label='REJECT: s1 — CARLA collision OR protocol violation'),
+                label='REJECT: s2 s3 s4 (pending) OR s1 (sink)'),
         ], loc='lower right', fontsize=9)
         ax.axis('off')
         plt.tight_layout()
@@ -786,25 +783,15 @@ def main():
     print("  AALpy L* × CARLA  —  CARLA-PHYSICS SUL  (v2)")
     print()
     print("  What CARLA logic:")
-    print("    s0, s3 are ACCEPTING.")
-    print("    s1, s2, s4 are REJECTING.")
+    print("    s0 ONLY is ACCEPTING.")
+    print("    s1, s2, s3, s4 are REJECTING.")
     print()
     print("  Target DFA (will merge unrecoverable states):")
-    print("    s0  ACCEPT  initial:   safe/unsafe→s0, i→s2, e→s1")
-    print("    s2  REJECT  ind on:    i→s2, safe→s3, unsafe→s4, e→s1")
-    print("    s3  ACCEPT  ind+safe:  i/safe→s3, unsafe→s1, e→s0")
-    print("    s4  REJECr_on  — was 'i' declared before 'e'?")
-    print("    _locked_config — what config did CARLA confirm? ('safe'|'unsafe'|None)")
-    print("    _sink_flag     — protocol_violation OR CARLA_collision")
-    print()
-    print("  Acceptance = not _sink_flag")
-    print()
-    print("  Target DFA (5 states):")
-    print("    s0  ACCEPT  initial:   safe/unsafe→s0, i→s2, e→s1")
-    print("    s2  ACCEPT  ind on:    i→s2, safe→s3, unsafe→s4, e→s0")
-    print("    s3  ACCEPT  ind+safe:  i/safe→s3, unsafe→s1, e→s0")
-    print("    s4  ACCEPT  ind+unsafe:i/unsafe→s4, safe→s1, e→s1")
-    print("    s1  REJECT  sink:      all→s1")
+    print("    s0  ACCEPT  initial/done: safe/unsafe→s0, i→s2, e→s1")
+    print("    s2  REJECT  ind on:       i→s2, safe→s3, unsafe→s4, e→s1")
+    print("    s3  REJECT  ind+safe:     i/safe→s3, unsafe→s1, e→s0")
+    print("    s4  REJECT  ind+unsafe:   i/unsafe→s4, safe→s1, e→s1")
+    print("    s1  REJECT  sink:         all→s1")
     print("=" * 70)
 
     sul      = CarlaProtocolSUL()
@@ -846,10 +833,11 @@ def main():
         (('safe', 'i', 'safe', 'e'),     True,  "safe→i→safe→e     SUCCESS (s0→s0→s2→s3→s0) ACCEPT"),
         (('safe',),                      True,  "safe              s0→s0 ACCEPT (pre-indicator)"),
         (('unsafe',),                    True,  "unsafe            s0→s0 ACCEPT (pre-indicator)"),
-        (('i', 'safe', 'safe', 'e'),     True,  "i→safe→safe→e     s3 self-loop then success"),
         (('i', 'safe', 'e', 'i', 'safe', 'e'), True,  "two safe episodes  both success ACCEPT"),
         # ── REJECT traces ─────────────────────────────────────────────────────
         (('i',),                         False, "i                 s0→s2 REJECT"),
+        (('i', 'safe'),                  False, "i→safe            s0→s2→s3 REJECT (not done yet)"),
+        (('i', 'safe', 'safe'),          False, "i→safe→safe       s3 self-loop REJECT (not done yet)"),
         (('i', 'unsafe'),                False, "i→unsafe          s2→s4 REJECT"),
         (('i', 'e'),                     False, "i→e               ILLEGAL config not set s2→s1 REJECT"),
         (('e',),                         False, "e                 ILLEGAL s0→s1 REJECT"),
