@@ -17,7 +17,7 @@ psi = Automata.DFA(
     ['i', 'safe', 'unsafe', 'e'],   # alphabet
     ['s0', 's1', 's2', 's3'],       # states
     's0',                           # start state
-    lambda q: q in ['s0'],          # accepting states
+    lambda q: q in ['s0'],          # accepting states 
     lambda q, a: {
         ('s0', 'i'): 's1',
         ('s0', 'safe'): 's0',
@@ -49,7 +49,7 @@ phi = Automata.DFA(
     ['i', 'safe', 'unsafe', 'e'],              # alphabet
     ['s0', 's1', 's2', 's3','s4'],                  # states
     's0',                                      # start state
-    lambda q: q in ['s4'],                     # accepting states (only q0 has a double circle)
+    lambda q: q in ['s4'],                     # accepting states (only q0 has a double circle) #s4 the accept state
     lambda q, a: {
         ('s0', 'i'): 's1',
         ('s0', 'safe'): 's0',
@@ -71,10 +71,10 @@ phi = Automata.DFA(
         ('s3', 'unsafe'): 's3',
         ('s3', 'e'): 's3',
 
-        ('s4','i'):'s4',
-        ('s4','safe'):'s4',
-        ('s4','unsafe'):'s4',
-        ('s4','e'):'s4'
+        ('s4','i'):'s3',
+        ('s4','safe'):'s3',
+        ('s4','unsafe'):'s3',
+        ('s4','e'):'s3'
     }[(q, a)]
 )
 #given to enforce

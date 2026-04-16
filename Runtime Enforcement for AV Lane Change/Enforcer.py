@@ -93,16 +93,8 @@ def enforcer(psi, phi):
             sigmaS.append(event)
             sigmaC = []
             
-            # Check for lane change condition
-            if event == "safe":
-                action = "change"
-            elif event == "e":
-                if phi.F(q): 
-                    # State is safe/accepting, we can change
-                    action = "change"
-                else:
-                    # Unwanted state, enforce safe word "stay"
-                    action = "stay"
+            if phi.F(q):
+                action="change"
         else:
             # We are buffering, default action is stay
             sigmaC.append(event)
