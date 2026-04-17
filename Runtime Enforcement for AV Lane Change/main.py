@@ -12,14 +12,6 @@ import Automata
 import Enforcer
 from sampler import generate_good_trace, generate_bad_trace, run_dfa, ACCEPT
 
-try:
-    from learner import CarlaProtocolSUL
-    CARLA_AVAILABLE = True
-except ImportError:
-    CARLA_AVAILABLE = False
-    print("[WARNING] CARLA module or associated dependencies not found. Mocking the driver behaviour for demonstration...")
-
-
 class RuntimeVerifierManager:
     """Wrapper that evaluates step-by-step verification."""
     def __init__(self, psi, phi):
@@ -89,12 +81,16 @@ def main():
     # 2. Setup the Enforcer and the Driver
     verifier = RuntimeVerifierManager(runtime_verifier.psi, runtime_verifier.phi)
     
-    if CARLA_AVAILABLE:
+    try:
+        from learner import CarlaProtocolSUL
         driver = CarlaProtocolSUL()
         print("[Driver] Booting up CARLA Driver Physics SUL...")
         driver.pre()
-    else:
-        driver = None
+    except Exception as e:
+        print(f"\n[FATAL ERROR] CARLA simulator could not be loaded or is not connected.")
+        print(f"Details: {e}")
+        print("Please ensure CARLA is running on port 2000. Simulation aborted.")
+        sys.exit(1)
 
     carla_outcome = "no lane change"
     
@@ -106,52 +102,36 @@ def main():
         action = verifier.process_event(event)
         print(f"     Verifier decision: {action.upper()}")
 
-        if CARLA_AVAILABLE:
-            if event != 'e':
-                # Pass setup events to CARLA driver
-                driver.step(event)
-                
-                # Do NOT treat protocol violations from the oracle (_sink_flag) as physical crashes
-                # during setup events. We only care if an actual collision occurred.
-                if getattr(driver, '_collision', False):
-                    carla_outcome = "crash"
-                    print("     [Driver] Physical impact registered early.")
-                    break
-            else:
-                if action == 'stay':
-                    print("     [Driver] Suppressing unverified 'e', enforcing 'stay' instead to avoid crash!")
-                    carla_outcome = "no lane change"
-                else:
-                    print("     [Driver] EXECUTING LANE CHANGE IN SIMULATION.")
-                    driver.step(event)
-                    
-                    # For 'e', we care if a physical crash occurred
-                    if getattr(driver, '_collision', False):
-                        carla_outcome = "crash"
-                        print("     [Driver] Physical impact registered.")
-                    else:
-                        carla_outcome = "safe lane change"
-                
-                # Stop execution of the trace immediately after 'e' finishes
+        if event != 'e':
+            # Pass setup events to CARLA driver
+            driver.step(event)
+            
+            # Do NOT treat protocol violations from the oracle (_sink_flag) as physical crashes
+            # during setup events. We only care if an actual collision occurred.
+            if getattr(driver, '_collision', False):
+                carla_outcome = "crash"
+                print("     [Driver] Physical impact registered early.")
                 break
         else:
-            # Mock driver fallback behavior
-            if event != 'e':
-                print(f"     [Driver] Setting up environment with event: {event}")
+            if action == 'stay':
+                print("     [Driver] Suppressing unverified 'e', enforcing 'stay' instead to avoid crash!")
+                carla_outcome = "no lane change"
             else:
-                if action == 'change':
-                    print("     [Driver] EXECUTING LANE CHANGE IN SIMULATION.")
-                    carla_outcome = "safe lane change"
-                else:
-                    print("     [Driver] INTERCEPTED DANGEROUS COMMAND: Enforcing 'stay' and blocking lane change.")
-                    carla_outcome = "no lane change"
-                break
+                print("     [Driver] EXECUTING LANE CHANGE IN SIMULATION.")
+                driver.step(event)
                 
-    if CARLA_AVAILABLE:
-        # Complete simulation safely
-        driver.post()
-    else:
-        pass
+                # For 'e', we care if a physical crash occurred
+                if getattr(driver, '_collision', False):
+                    carla_outcome = "crash"
+                    print("     [Driver] Physical impact registered.")
+                else:
+                    carla_outcome = "safe lane change"
+            
+            # Stop execution of the trace immediately after 'e' finishes
+            break
+                
+    # Complete simulation safely
+    driver.post()
 
     print("="*60)
     print("FINAL EVALUATION".center(60))
