@@ -64,14 +64,20 @@ def main():
     print(" LANE CHANGE VERIFIER INITIALIZED ".center(60))
     print("="*60)
 
-    # 1. Generate trace from sampler
-    is_good = random.choice([True, False])
-    if is_good:
-        trace = generate_good_trace()
-        trace_type = "GOOD Trace (Should be SAFE)"
+    # 1. Choose trace source: user input or sampler
+    user_input = input("Enter a trace comma-separated (e.g., i,safe,e) or press Enter to use random sampler: ").strip()
+    
+    if user_input:
+        trace = [x.strip() for x in user_input.split(',') if x.strip()]
+        trace_type = "USER PROVIDED Trace"
     else:
-        trace = generate_bad_trace()
-        trace_type = "BAD Trace (Throws UNSAFE / ERROR)"
+        is_good = random.choice([True, False])
+        if is_good:
+            trace = generate_good_trace()
+            trace_type = "GOOD Trace (Should be SAFE)"
+        else:
+            trace = generate_bad_trace()
+            trace_type = "BAD Trace (Throws UNSAFE / ERROR)"
         
     final_sampler_state = run_dfa(trace)
     sampler_outcome = "SAFE" if final_sampler_state in ACCEPT else "UNSAFE"
@@ -90,7 +96,7 @@ def main():
     else:
         driver = None
 
-    carla_outcome = "SAFE LANE CHANGE"
+    carla_outcome = "no lane change"
     
     # 3. Simulate step by step with the trace from the sampler
     for event in trace:
@@ -101,38 +107,51 @@ def main():
         print(f"     Verifier decision: {action.upper()}")
 
         if CARLA_AVAILABLE:
-            # Suppose Carla is available, we enforce the verifier output.
-            # Only trigger lane changes or update carla if the verifier complies
-            # If action is 'change', it implicitly means 'e' was verified safe!
-            if action == 'stay' and event == 'e':
-                print("     [Driver] Suppressing unverified 'e', enforcing 'stay' instead to avoid crash!")
-            else:
-                # Forward to CARLA SUL
-                is_valid = driver.step(event)
+            if event != 'e':
+                # Pass setup events to CARLA driver
+                driver.step(event)
                 
-                # Check for crash using the driver's internals
-                if not is_valid or getattr(driver, '_sink_flag', False):
-                    carla_outcome = "CRASH OCCURRED"
-                    print("     [Driver] Physical impact / Protocol violation registered.")
+                # Do NOT treat protocol violations from the oracle (_sink_flag) as physical crashes
+                # during setup events. We only care if an actual collision occurred.
+                if getattr(driver, '_collision', False):
+                    carla_outcome = "crash"
+                    print("     [Driver] Physical impact registered early.")
+                    break
+            else:
+                if action == 'stay':
+                    print("     [Driver] Suppressing unverified 'e', enforcing 'stay' instead to avoid crash!")
+                    carla_outcome = "no lane change"
+                else:
+                    print("     [Driver] EXECUTING LANE CHANGE IN SIMULATION.")
+                    driver.step(event)
+                    
+                    # For 'e', we care if a physical crash occurred
+                    if getattr(driver, '_collision', False):
+                        carla_outcome = "crash"
+                        print("     [Driver] Physical impact registered.")
+                    else:
+                        carla_outcome = "safe lane change"
+                
+                # Stop execution of the trace immediately after 'e' finishes
+                break
         else:
             # Mock driver fallback behavior
-            # If the trace is bad, let's mock it
-            if action == 'change':
-                print("     [Driver] EXECUTING LANE CHANGE IN SIMULATION.")
-            elif action == 'stay' and event == 'e':
-                print("     [Driver] INTERCEPTED DANGEROUS COMMAND: Enforcing 'stay' and blocking lane change.")
+            if event != 'e':
+                print(f"     [Driver] Setting up environment with event: {event}")
             else:
-                print(f"     [Driver] Status: {action.upper()}")
+                if action == 'change':
+                    print("     [Driver] EXECUTING LANE CHANGE IN SIMULATION.")
+                    carla_outcome = "safe lane change"
+                else:
+                    print("     [Driver] INTERCEPTED DANGEROUS COMMAND: Enforcing 'stay' and blocking lane change.")
+                    carla_outcome = "no lane change"
+                break
                 
     if CARLA_AVAILABLE:
         # Complete simulation safely
-        if not getattr(driver, '_sink_flag', False) and carla_outcome != "CRASH OCCURRED":
-            carla_outcome = "SAFE LANE CHANGE (Confirmed by CARLA SUL)"
-            
         driver.post()
     else:
-        # Mock final evaluation
-        carla_outcome = "SAFE (Mocked Driver Output)" if sampler_outcome == "SAFE" else "BLOCKED/STAY (Mocked Driver Output)"
+        pass
 
     print("="*60)
     print("FINAL EVALUATION".center(60))
